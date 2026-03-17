@@ -268,6 +268,14 @@ case "$command" in
       echo "Usage: ./devctl.sh release vX.Y.Z"
       exit 1
     fi
+    if [[ -n $(git status --porcelain) ]]; then
+      echo "❌ Working tree is dirty. Commit or stash changes before releasing."
+      exit 1
+    fi
+    if git tag -l "$tag" | grep -q .; then
+      echo "❌ Tag '$tag' already exists locally. Delete it first: git tag -d $tag"
+      exit 1
+    fi
     echo "── Tagging $tag and pushing ──"
     git tag "$tag"
     git push origin main

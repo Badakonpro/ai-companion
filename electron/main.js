@@ -1,7 +1,7 @@
 // electron/main.js — Electron main process
 // Spawns the Python backend, waits for /api/health, then opens the app.
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -20,13 +20,15 @@ function backendDir() {
 
 function findPython() {
   const bd = backendDir();
-  const venvPython = path.join(bd, "venv", "bin", "python");
-  // Use venv python if it exists, otherwise system python3
+  // venv path differs between Unix and Windows
+  const venvPython = process.platform === "win32"
+    ? path.join(bd, "venv", "Scripts", "python.exe")
+    : path.join(bd, "venv", "bin", "python");
   try {
     require("fs").accessSync(venvPython);
     return venvPython;
   } catch {
-    return "python3";
+    return process.platform === "win32" ? "python" : "python3";
   }
 }
 
@@ -52,6 +54,8 @@ function waitForBackend(retries = 30) {
     const check = (n) => {
       if (n <= 0) return reject(new Error("Backend did not start in time"));
       const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/api/health`, (res) => {
+        // Must consume body to release the underlying socket
+        res.resume();
         if (res.statusCode === 200) return resolve();
         setTimeout(() => check(n - 1), 1000);
       });
@@ -81,7 +85,10 @@ app.whenReady().then(async () => {
   try {
     await waitForBackend();
   } catch (err) {
-    console.error(err.message);
+    dialog.showErrorBox(
+      "AI Companion — 启动失败",
+      `后端服务未能在规定时间内启动。\n\n${err.message}\n\n请确保 Python 环境正确，然后重试。`
+    );
     app.quit();
     return;
   }
