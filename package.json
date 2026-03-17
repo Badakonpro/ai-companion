@@ -1,0 +1,49 @@
+{
+  "name": "ai-companion",
+  "version": "0.5.0",
+  "description": "AI Companion – Galgame-style desktop app",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "build:all": "npm run build:frontend",
+    "electron:dev": "electron .",
+    "pack:mac": "npm run build:all && electron-builder --mac",
+    "pack:win": "npm run build:all && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.badakonpro.ai-companion",
+    "productName": "AI Companion",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "backend/**",
+      "!backend/venv",
+      "!backend/storage",
+      "!backend/logs",
+      "!backend/__pycache__"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/requirements.txt",
+        "to": "requirements.txt"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "icon": "assets/icon.png",
+      "target": ["dmg"]
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": ["nsis"]
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.0"
+  }
+}

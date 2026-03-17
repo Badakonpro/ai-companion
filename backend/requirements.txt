@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+httpx
+ollama
+onnxruntime
+# onnxruntime-openvino # uncomment on PC for Intel NPU support
+# onnxruntime-silicon # alternative for Mac if relying tightly on CoreML
+python-dotenv
+apsw
+sqlite-vss

@@ -1,0 +1,40 @@
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+backend/venv/
+
+# ── Node / Frontend ─────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+
+# ── Build artifacts ──────────────────────────────────────────────────
+backend/static/
+dist/
+out/
+*.dmg
+*.exe
+*.AppImage
+
+# ── Runtime / Data ───────────────────────────────────────────────────
+backend/storage/main.db
+backend/storage/main.db-wal
+backend/storage/main.db-shm
+backend/storage/vectors.db
+backend/storage/vectors.db-wal
+backend/storage/vectors.db-shm
+backend/logs/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+.run/
+*.swp
+
+# ── Environment ──────────────────────────────────────────────────────
+.env
+.env.*
+
+# ── Test artifacts ───────────────────────────────────────────────────
+test_m3.py
