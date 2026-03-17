@@ -19,17 +19,21 @@
       "output": "dist"
     },
     "files": [
-      "electron/**",
-      "backend/**",
-      "!backend/venv",
-      "!backend/storage",
-      "!backend/logs",
-      "!backend/__pycache__"
+      "electron/**"
     ],
     "extraResources": [
       {
-        "from": "backend/requirements.txt",
-        "to": "requirements.txt"
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!storage/main.db*",
+          "!storage/vectors.db*",
+          "!logs/**",
+          "!__pycache__/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
       }
     ],
     "mac": {

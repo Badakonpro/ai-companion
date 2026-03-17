@@ -30,7 +30,7 @@ jobs:
       - name: Install frontend deps
         run: cd frontend && npm ci
 
-      - name: Install backend deps
+      - name: Setup backend venv
         run: |
           cd backend
           python -m venv venv
