@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './index.css';
-import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, MODEL_CONFIG_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint } from './lib/config';
+import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_BLUEPRINT_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, MODEL_CONFIG_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint } from './lib/config';
 
 interface Message {
   id: string;
@@ -12,6 +12,7 @@ interface StoryChoice {
   id: string;
   title: string;
   description?: string;
+  route_hint?: string;
 }
 
 interface StorySeed {
@@ -20,6 +21,32 @@ interface StorySeed {
   description?: string;
   world_seed?: string;
   personality?: string;
+  genre?: string;
+  relationship?: string;
+  protagonist_type?: string;
+  heroine_bio?: string;
+  key_routes?: Array<{ route: string; tone: string; preview: string }>;
+}
+
+interface RelationshipType {
+  id: string;
+  label: string;
+  icon: string;
+  desc: string;
+}
+
+interface StoryBlueprint {
+  seed: StorySeed;
+  heroine_detail: string;
+  protagonist_hooks: Array<{ type: string; effect_on_heroine: string }>;
+  story_nodes: Array<{
+    node_id: number;
+    title: string;
+    description: string;
+    branch_choices?: Array<{ direction: string; action: string; consequence: string }>;
+  }>;
+  route_map: Array<{ route_name: string; tone: string; key_moments: string; ending_preview: string }>;
+  opening_scene: string;
 }
 
 interface ThemeTag {
@@ -73,7 +100,7 @@ interface StoryStreamState {
   choices: StoryChoice[];
 }
 
-type AppStage = 'lobby' | 'story';
+type AppStage = 'lobby' | 'blueprint' | 'story';
 type NsfwLevel = 'mild' | 'moderate' | 'explicit';
 
 const MODEL_PRESETS: Array<{ id: string; label: string }> = [
@@ -107,11 +134,15 @@ function App() {
   const [activeCharacters, setActiveCharacters] = useState<string[]>(['protagonist', 'linxi']);
   const [activeSeed, setActiveSeed] = useState<StorySeed | null>(null);
   const [themeTags, setThemeTags] = useState<ThemeTag[]>([]);
+  const [relationshipTypes, setRelationshipTypes] = useState<RelationshipType[]>([]);
+  const [selectedRelationship, setSelectedRelationship] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [nsfwLevel, setNsfwLevel] = useState<NsfwLevel>('mild');
   const [userHint, setUserHint] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [candidateSeeds, setCandidateSeeds] = useState<StorySeed[]>([]);
+  const [blueprint, setBlueprint] = useState<StoryBlueprint | null>(null);
+  const [blueprintLoading, setBlueprintLoading] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
   const [storyState, setStoryState] = useState<StoryState>({ tension: 0, trust: 0, progress: 0 });
   const [emotionState, setEmotionState] = useState<EmotionState>({ affection: 0.3, tension: 0.3, trust: 0.4, comfort: 0.5 });
@@ -151,6 +182,9 @@ function App() {
         const data = await response.json();
         if (Array.isArray(data?.tags)) {
           setThemeTags(data.tags);
+        }
+        if (Array.isArray(data?.relationships)) {
+          setRelationshipTypes(data.relationships);
         }
       } catch (error) {
         console.warn('Failed to load theme tags', error);
@@ -214,34 +248,79 @@ function App() {
     }
   };
 
-  const startFromSeed = (seed: StorySeed) => {
+  const startFromSeed = async (seed: StorySeed) => {
+    // Phase 2: Generate blueprint first
+    setActiveSeed(seed);
+    setBlueprintLoading(true);
+    setBlueprint(null);
+    setStage('blueprint');
+
+    try {
+      const resp = await fetch(STORY_BLUEPRINT_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed,
+          nsfw_level: nsfwLevel,
+          initial_affection: initialAffection,
+          relationship: seed.relationship || selectedRelationship,
+        }),
+      });
+      if (!resp.ok) throw new Error('Blueprint generation failed');
+      const data = await resp.json();
+      if (data?.blueprint) {
+        setBlueprint(data.blueprint);
+      }
+    } catch (error) {
+      console.error('Failed to generate blueprint', error);
+      // Fallback: go directly to story without blueprint
+      launchStory(seed, null);
+    } finally {
+      setBlueprintLoading(false);
+    }
+  };
+
+  const launchStory = (seed: StorySeed, bp: StoryBlueprint | null) => {
     const newSessionId = `sess_${Date.now()}`;
     setSessionId(newSessionId);
     setActiveSeed(seed);
     setStoryState({ tension: 0, trust: 0, progress: 0 });
     setEmotionState({ affection: initialAffection, tension: 0.3, trust: 0.4, comfort: 0.5 });
+    const openingText = bp?.opening_scene || seed.world_seed || seed.description || '故事开始了。';
     setMessages([
       {
         id: `intro_${Date.now()}_narr`,
         role: 'narrator',
-        content: `【${seed.title}】\n\n${seed.world_seed || seed.description || '故事开始了。'}`,
+        content: `【${seed.title}】\n\n${openingText}`,
       },
     ]);
     setChoices([]);
     setInput('');
     setArcInfo(null);
     setStage('story');
+
+    const sessionPayload: Record<string, unknown> = {
+      session_id: newSessionId,
+      title: seed.title || '未命名剧本',
+      seed: { id: seed.id, title: seed.title, description: seed.description, world_seed: seed.world_seed },
+      nsfw_level: nsfwLevel,
+      initial_affection: initialAffection,
+    };
+
+    // Save session + blueprint in parallel
     fetch(SESSIONS_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: newSessionId,
-        title: seed.title || '未命名剧本',
-        seed: { id: seed.id, title: seed.title, description: seed.description, world_seed: seed.world_seed },
-        nsfw_level: nsfwLevel,
-        initial_affection: initialAffection,
-      }),
+      body: JSON.stringify(sessionPayload),
     }).catch(() => {});
+
+    if (bp) {
+      fetch(`${SESSIONS_ENDPOINT}/${encodeURIComponent(newSessionId)}/blueprint`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blueprint: bp }),
+      }).catch(() => {});
+    }
   };
 
   const resumeSession = async (saved: SavedSession) => {
@@ -336,6 +415,7 @@ function App() {
           count: 3,
           user_hint: userHint.trim(),
           randomize_personality: randomPersonality,
+          relationship: selectedRelationship,
         }),
       });
       if (!response.ok) {
@@ -361,6 +441,8 @@ function App() {
     setInput('');
     setCandidateSeeds([]);
     setArcInfo(null);
+    setBlueprint(null);
+    setBlueprintLoading(false);
     // Reload session list
     try {
       const response = await fetch(SESSIONS_ENDPOINT);
@@ -861,8 +943,36 @@ function App() {
             </div>
           </section>
 
+          {relationshipTypes.length > 0 && (
+            <section className="lobby-section">
+              <h3>③ 初始关系 <span className="tag-count-hint">（可选，影响剧情起点）</span></h3>
+              <div className="relationship-grid">
+                <button
+                  type="button"
+                  className={`relationship-chip ${selectedRelationship === '' ? 'active' : ''}`}
+                  onClick={() => setSelectedRelationship('')}
+                >
+                  <span className="rel-icon">🎲</span>
+                  <span className="rel-label">随机</span>
+                </button>
+                {relationshipTypes.map((rel) => (
+                  <button
+                    key={rel.id}
+                    type="button"
+                    className={`relationship-chip ${selectedRelationship === rel.id ? 'active' : ''}`}
+                    onClick={() => setSelectedRelationship(rel.id)}
+                    title={rel.desc}
+                  >
+                    <span className="rel-icon">{rel.icon}</span>
+                    <span className="rel-label">{rel.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="lobby-section">
-            <h3>③ 补充要求 <span className="tag-count-hint">（可选）</span></h3>
+            <h3>{relationshipTypes.length > 0 ? '④' : '③'} 补充要求 <span className="tag-count-hint">（可选）</span></h3>
             <textarea
               className="custom-textarea user-hint-input"
               value={userHint}
@@ -873,7 +983,7 @@ function App() {
           </section>
 
           <section className="lobby-section">
-            <h3>④ 初始设定</h3>
+            <h3>{relationshipTypes.length > 0 ? '⑤' : '④'} 初始设定</h3>
             <div className="initial-settings">
               <div className="setting-row">
                 <label className="setting-label">❤️ 初始好感度</label>
@@ -901,7 +1011,7 @@ function App() {
           </section>
 
           <section className="lobby-section">
-            <h3>⑤ 生成剧本</h3>
+            <h3>{relationshipTypes.length > 0 ? '⑥' : '⑤'} 生成剧本</h3>
             <button
               className="start-story-button ai-generate-button full-width"
               onClick={generateSeeds}
@@ -927,12 +1037,27 @@ function App() {
                 {candidateSeeds.map((seed) => (
                   <div key={seed.id} className="candidate-card">
                     <div className="candidate-title">{seed.title}</div>
-                    {seed.personality && <div className="candidate-personality">🎭 {seed.personality}</div>}
+                    <div className="candidate-meta-row">
+                      {seed.genre && <span className="candidate-genre">{seed.genre}</span>}
+                      {seed.personality && <span className="candidate-personality">🎭 {seed.personality}</span>}
+                      {seed.relationship && <span className="candidate-relationship">💞 {seed.relationship}</span>}
+                    </div>
+                    {seed.protagonist_type && <div className="candidate-protagonist">🧑 男主：{seed.protagonist_type}</div>}
                     <div className="candidate-desc">{seed.description}</div>
+                    {seed.heroine_bio && <div className="candidate-heroine">👩 {seed.heroine_bio}</div>}
                     <div className="candidate-world">{seed.world_seed}</div>
+                    {seed.key_routes && seed.key_routes.length > 0 && (
+                      <div className="candidate-routes">
+                        {seed.key_routes.map((r, i) => (
+                          <span key={i} className="candidate-route-chip">
+                            {r.route} <span className="route-tone">({r.tone})</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     <button
                       className="start-story-button"
-                      onClick={() => startFromSeed(seed)}
+                      onClick={() => void startFromSeed(seed)}
                       type="button"
                     >
                       选择此剧本
@@ -976,6 +1101,131 @@ function App() {
           <section className="lobby-section lobby-footer-hint">
             <p>你是Galgame男主角，林夕是女主角。信任与情绪会隐式影响剧情走向。</p>
           </section>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === 'blueprint') {
+    return (
+      <div className="app-container blueprint-container">
+        <header className="app-header">
+          <div className="persona-info">
+            <div className="persona-avatar"></div>
+            <div className="persona-details">
+              <h2>剧本蓝图 — {activeSeed?.title || '加载中...'}</h2>
+              <p><span className="status-indicator online"></span> 预览剧本结构后开始故事</p>
+            </div>
+          </div>
+          <div className="header-actions">
+            <button className="back-lobby-button" onClick={backToLobby} type="button">返回剧本页</button>
+          </div>
+        </header>
+
+        <div className="blueprint-content">
+          {blueprintLoading && (
+            <div className="blueprint-loading">
+              <div className="typing-indicator">
+                <div className="typing-dot"></div>
+                <div className="typing-dot"></div>
+                <div className="typing-dot"></div>
+              </div>
+              <span>AI 正在生成剧本蓝图，构建世界观和角色详情...</span>
+            </div>
+          )}
+
+          {!blueprintLoading && blueprint && (
+            <>
+              {blueprint.heroine_detail && (
+                <section className="bp-section">
+                  <h3>👩 林夕 — 角色详情</h3>
+                  <p className="bp-text">{blueprint.heroine_detail}</p>
+                </section>
+              )}
+
+              {blueprint.protagonist_hooks && blueprint.protagonist_hooks.length > 0 && (
+                <section className="bp-section">
+                  <h3>🧑 男主可能方向</h3>
+                  <div className="bp-hooks">
+                    {blueprint.protagonist_hooks.map((h, i) => (
+                      <div key={i} className="bp-hook-card">
+                        <span className="bp-hook-type">{h.type}</span>
+                        <span className="bp-hook-effect">{h.effect_on_heroine}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {blueprint.route_map && blueprint.route_map.length > 0 && (
+                <section className="bp-section">
+                  <h3>🗺️ 可能路线</h3>
+                  <div className="bp-routes">
+                    {blueprint.route_map.map((r, i) => (
+                      <div key={i} className="bp-route-card">
+                        <div className="bp-route-header">
+                          <span className="bp-route-name">{r.route_name}</span>
+                          <span className="bp-route-tone">{r.tone}</span>
+                        </div>
+                        <p className="bp-route-moments">{r.key_moments}</p>
+                        <p className="bp-route-ending">结局：{r.ending_preview}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {blueprint.story_nodes && blueprint.story_nodes.length > 0 && (
+                <section className="bp-section">
+                  <h3>📖 剧情节点概览</h3>
+                  <div className="bp-nodes">
+                    {blueprint.story_nodes.map((node, i) => (
+                      <div key={i} className="bp-node-card">
+                        <div className="bp-node-title">
+                          <span className="bp-node-num">#{node.node_id}</span>
+                          {node.title}
+                        </div>
+                        <p className="bp-node-desc">{node.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {blueprint.opening_scene && (
+                <section className="bp-section">
+                  <h3>🎬 开场</h3>
+                  <p className="bp-opening">{blueprint.opening_scene}</p>
+                </section>
+              )}
+
+              <div className="bp-actions">
+                <button
+                  className="start-story-button bp-start"
+                  onClick={() => launchStory(activeSeed!, blueprint)}
+                  type="button"
+                >
+                  ▶ 进入故事
+                </button>
+                <button
+                  className="start-story-button regenerate-button"
+                  onClick={() => void startFromSeed(activeSeed!)}
+                  type="button"
+                >
+                  🔄 重新生成蓝图
+                </button>
+              </div>
+            </>
+          )}
+
+          {!blueprintLoading && !blueprint && (
+            <div className="blueprint-loading">
+              <span>蓝图生成失败，请返回重试。</span>
+              <button className="back-lobby-button" onClick={backToLobby} type="button" style={{ marginTop: '12px' }}>
+                返回剧本页
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1116,7 +1366,10 @@ function App() {
                   className="choice-button"
                   onClick={() => handleChoiceClick(choice)}
                 >
-                  <span className="choice-main">{choice.title}</span>
+                  <span className="choice-main">
+                    {choice.title}
+                    {choice.route_hint && <span className="route-hint-badge">{choice.route_hint}</span>}
+                  </span>
                   {choice.description ? <span className="choice-desc">{choice.description}</span> : null}
                 </button>
               ))}

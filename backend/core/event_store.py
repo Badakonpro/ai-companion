@@ -148,6 +148,27 @@ class EventStore:
                 )
                 """
             )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS protagonist_profile (
+                    session_id TEXT PRIMARY KEY,
+                    profile_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS script_blueprints (
+                    session_id TEXT PRIMARY KEY,
+                    blueprint_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+
             conn.commit()
 
     @staticmethod
@@ -446,6 +467,8 @@ class EventStore:
             conn.execute("DELETE FROM episodic_events WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM emotion_state WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM story_arcs WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM protagonist_profile WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM script_blueprints WHERE session_id = ?", (session_id,))
             conn.commit()
         l1_cache.invalidate_prefix(f'state:{session_id}')
         l1_cache.invalidate_prefix(f'facts:{session_id}')
@@ -855,3 +878,61 @@ class EventStore:
             "turn_number": turn_number,
             "restored_at": now,
         }
+
+    # ── Protagonist Profile ──────────────────────────────────────────
+
+    def get_protagonist_profile(self, session_id: str) -> dict[str, float] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT profile_json FROM protagonist_profile WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["profile_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def save_protagonist_profile(self, session_id: str, profile: dict[str, float]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO protagonist_profile (session_id, profile_json, updated_at)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(session_id) DO UPDATE SET
+                    profile_json = excluded.profile_json,
+                    updated_at = excluded.updated_at
+                """,
+                (session_id, json.dumps(profile, ensure_ascii=False)),
+            )
+            conn.commit()
+
+    # ── Script Blueprint ─────────────────────────────────────────────
+
+    def get_blueprint(self, session_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT blueprint_json FROM script_blueprints WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["blueprint_json"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def save_blueprint(self, session_id: str, blueprint: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO script_blueprints (session_id, blueprint_json, created_at)
+                VALUES (?, ?, datetime('now'))
+                ON CONFLICT(session_id) DO UPDATE SET
+                    blueprint_json = excluded.blueprint_json,
+                    created_at = excluded.created_at
+                """,
+                (session_id, json.dumps(blueprint, ensure_ascii=False)),
+            )
+            conn.commit()

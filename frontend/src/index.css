@@ -1094,3 +1094,292 @@ body {
   border-color: #d63031;
   color: #ff7675;
 }
+
+/* ── Relationship Selector Grid ────────────────────── */
+.relationship-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.relationship-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.relationship-chip:hover {
+  border-color: rgba(255, 107, 129, 0.4);
+  background: rgba(255, 107, 129, 0.08);
+}
+
+.relationship-chip.active {
+  border-color: rgba(255, 107, 129, 0.7);
+  background: rgba(255, 107, 129, 0.15);
+  color: #ff6b81;
+}
+
+.rel-icon {
+  font-size: 1rem;
+}
+
+.rel-label {
+  font-size: 0.85rem;
+}
+
+/* ── Candidate Card New Fields ────────────────────── */
+.candidate-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.candidate-genre {
+  font-size: 0.8rem;
+  color: #74b9ff;
+  background: rgba(116, 185, 255, 0.1);
+  border: 1px solid rgba(116, 185, 255, 0.25);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.candidate-relationship {
+  font-size: 0.8rem;
+  color: #fd79a8;
+  background: rgba(253, 121, 168, 0.1);
+  border: 1px solid rgba(253, 121, 168, 0.25);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.candidate-protagonist {
+  font-size: 0.82rem;
+  color: #55efc4;
+  opacity: 0.9;
+}
+
+.candidate-heroine {
+  font-size: 0.84rem;
+  color: #ffeaa7;
+  line-height: 1.5;
+  border-left: 2px solid rgba(255, 234, 167, 0.3);
+  padding-left: 10px;
+}
+
+.candidate-routes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.candidate-route-chip {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.route-tone {
+  opacity: 0.6;
+  font-size: 0.72rem;
+}
+
+/* ── Route Hint Badge on Choices ────────────────────── */
+.route-hint-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: #a29bfe;
+  background: rgba(162, 155, 254, 0.15);
+  border: 1px solid rgba(162, 155, 254, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-weight: 400;
+}
+
+/* ── Blueprint Preview Page ────────────────────── */
+.blueprint-container {
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.blueprint-content {
+  padding: 16px 20px;
+  display: grid;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.blueprint-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.bp-section {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.bp-section h3 {
+  font-size: 0.95rem;
+  margin: 0 0 10px;
+  color: #ff6b81;
+}
+
+.bp-text {
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.bp-hooks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bp-hook-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.bp-hook-type {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #55efc4;
+}
+
+.bp-hook-effect {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.bp-routes {
+  display: grid;
+  gap: 10px;
+}
+
+.bp-route-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.bp-route-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.bp-route-name {
+  font-weight: 600;
+  color: #a29bfe;
+  font-size: 0.9rem;
+}
+
+.bp-route-tone {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.bp-route-moments {
+  font-size: 0.84rem;
+  color: var(--text-main);
+  line-height: 1.5;
+  margin: 0 0 4px;
+}
+
+.bp-route-ending {
+  font-size: 0.8rem;
+  color: #ffeaa7;
+  margin: 0;
+  opacity: 0.85;
+}
+
+.bp-nodes {
+  display: grid;
+  gap: 8px;
+}
+
+.bp-node-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid rgba(255, 107, 129, 0.4);
+  padding: 8px 12px;
+  border-radius: 0 8px 8px 0;
+}
+
+.bp-node-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.bp-node-num {
+  color: #ff6b81;
+  margin-right: 6px;
+  font-size: 0.8rem;
+}
+
+.bp-node-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.bp-opening {
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text-main);
+  margin: 0;
+  font-style: italic;
+  border-left: 2px solid rgba(255, 234, 167, 0.4);
+  padding-left: 12px;
+}
+
+.bp-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.bp-start {
+  font-size: 1rem;
+  padding: 12px 32px;
+}
