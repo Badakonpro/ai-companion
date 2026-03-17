@@ -8,24 +8,40 @@ from typing import Any
 class PromptGenerator:
     def __init__(self, config_path: Path):
         self.config_path = config_path
+        self._raw_data: dict[str, Any] = {}
         self.characters = self._load_characters()
+        self._protagonist_presets: dict[str, dict[str, Any]] = {}
+        self._heroine_presets: dict[str, dict[str, Any]] = {}
+        self._load_presets()
 
     def _load_characters(self) -> dict[str, dict[str, Any]]:
         if not self.config_path.exists():
             return {}
 
         try:
-            data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            self._raw_data = json.loads(self.config_path.read_text(encoding="utf-8"))
         except Exception:
             return {}
 
         result: dict[str, dict[str, Any]] = {}
-        for item in data.get("characters", []):
+        for item in self._raw_data.get("characters", []):
             character_id = str(item.get("id", "")).strip()
             if not character_id:
                 continue
             result[character_id] = item
         return result
+
+    def _load_presets(self) -> None:
+        for p in self._raw_data.get("protagonist_presets", []):
+            pid = str(p.get("id", "")).strip()
+            if pid:
+                self._protagonist_presets[pid] = p
+        for p in self._raw_data.get("heroine_presets", []):
+            pid = str(p.get("id", "")).strip()
+            if pid:
+                self._heroine_presets[pid] = p
+
+    # ── Public helpers ───────────────────────────────────────────────
 
     def list_characters(self) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
@@ -40,6 +56,30 @@ class PromptGenerator:
             )
         return output
 
+    def list_protagonist_presets(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": p.get("id", ""),
+                "label": p.get("label", ""),
+                "desc": p.get("desc", ""),
+                "traits": p.get("traits", {}),
+                "ai_generated": p.get("ai_generated", False),
+            }
+            for p in self._protagonist_presets.values()
+        ]
+
+    def list_heroine_presets(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": p.get("id", ""),
+                "label": p.get("label", ""),
+                "desc": p.get("desc", ""),
+                "traits": p.get("traits", {}),
+                "ai_generated": p.get("ai_generated", False),
+            }
+            for p in self._heroine_presets.values()
+        ]
+
     def resolve_active_characters(self, active_character_ids: list[str] | None) -> list[dict[str, Any]]:
         if not active_character_ids:
             default_ids = ["protagonist", "linxi"]
@@ -50,6 +90,83 @@ class PromptGenerator:
             if cid in self.characters:
                 selected.append(self.characters[cid])
         return selected
+
+    # ── Preset rendering ─────────────────────────────────────────────
+
+    @staticmethod
+    def _render_traits(traits: dict[str, float]) -> str:
+        """Convert trait dict to a dense descriptive line."""
+        labels = {
+            "warmth":      ("温情", "冷漠"),
+            "dominance":   ("强势主导", "温和随顺"),
+            "rationality": ("理性克制", "感性冲动"),
+            "openness":    ("开放坦诚", "封闭防御"),
+            "honesty":     ("直白表达", "迂回掩饰"),
+        }
+        parts: list[str] = []
+        for axis, (high, low) in labels.items():
+            v = traits.get(axis, 0.5)
+            if v >= 0.7:
+                parts.append(f"{high}({v:.0%})")
+            elif v <= 0.3:
+                parts.append(f"{low}({v:.0%})")
+        return "、".join(parts) if parts else "性格均衡"
+
+    def _render_preset_block(self, preset: dict[str, Any], role_label: str) -> str:
+        """Render a preset dict into a detailed character instruction block."""
+        lines: list[str] = [
+            f"【{role_label}】({preset.get('label', '')} — {preset.get('desc', '')})",
+            f"  性格量化: {self._render_traits(preset.get('traits', {}))}",
+        ]
+        behaviors = preset.get("behavior_patterns", [])
+        if behaviors:
+            lines.append("  行为模式:")
+            for b in behaviors:
+                lines.append(f"    · {b}")
+        speech = preset.get("speech_patterns", [])
+        if speech:
+            lines.append("  说话风格:")
+            for s in speech:
+                lines.append(f"    · {s}")
+        triggers = preset.get("emotional_triggers", {})
+        if triggers.get("softens_when"):
+            lines.append(f"  触发软化: {triggers['softens_when']}")
+        if triggers.get("tenses_when"):
+            lines.append(f"  触发紧绷: {triggers['tenses_when']}")
+        taboos = preset.get("taboos", [])
+        if taboos:
+            lines.append(f"  禁忌: {'、'.join(str(t) for t in taboos)}")
+        return "\n".join(lines)
+
+    def _get_protagonist_preset_block(self, character: dict[str, Any]) -> str:
+        preset_id = character.get("active_preset", "")
+        preset = self._protagonist_presets.get(preset_id)
+        if not preset:
+            return ""
+        return self._render_preset_block(preset, character.get("name", "你"))
+
+    def _get_heroine_preset_block(self, character: dict[str, Any]) -> str:
+        preset_id = character.get("active_preset", "")
+        preset = self._heroine_presets.get(preset_id)
+        if preset:
+            return self._render_preset_block(preset, character.get("name", "她"))
+        # Fallback: render legacy fields from character record itself
+        tabs = character.get("taboos", [])
+        taboo_text = "、".join(str(t) for t in tabs) if isinstance(tabs, list) else ""
+        return "\n".join([
+            f"【{character.get('name', '')}】({character.get('archetype', '')})",
+            f"  性格: {character.get('personality', '')}",
+            f"  说话风格: {character.get('speech_style', '')}",
+            f"  动机: {character.get('motivation', '')}",
+            f"  禁忌: {taboo_text}",
+        ])
+
+    def _build_character_block(self, c: dict[str, Any]) -> str:
+        cid = c.get("id", "")
+        if cid == "protagonist":
+            return self._get_protagonist_preset_block(c)
+        # All other characters treated as heroine / side character
+        return self._get_heroine_preset_block(c)
 
     def build_system_prompt(
         self,
@@ -64,19 +181,9 @@ class PromptGenerator:
 
         character_blocks: list[str] = []
         for c in active:
-            tabs = c.get("taboos", [])
-            taboo_text = "、".join(str(tab) for tab in tabs) if isinstance(tabs, list) else ""
-            character_blocks.append(
-                "\n".join(
-                    [
-                        f"【{c.get('name', '')}】({c.get('archetype', '')})",
-                        f"  性格: {c.get('personality', '')}",
-                        f"  说话风格: {c.get('speech_style', '')}",
-                        f"  动机: {c.get('motivation', '')}",
-                        f"  禁忌: {taboo_text}",
-                    ]
-                )
-            )
+            block = self._build_character_block(c)
+            if block:
+                character_blocks.append(block)
 
         tension = session_state.get("tension", 0.0)
         trust = session_state.get("trust", 0.0)

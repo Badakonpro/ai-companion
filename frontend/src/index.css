@@ -381,7 +381,123 @@ body {
   color: var(--text-main);
 }
 
-/* Section hint */
+/* ── Character Preset Selector ──────────────────────────────── */
+.preset-group {
+  margin-top: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+}
+
+.preset-group-label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  letter-spacing: 0.03em;
+}
+
+.preset-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.preset-chip {
+  padding: 5px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.preset-chip:hover {
+  border-color: rgba(108, 92, 231, 0.4);
+  color: var(--text-main);
+}
+
+.preset-chip.active {
+  border-color: rgba(108, 92, 231, 0.7);
+  background: rgba(108, 92, 231, 0.18);
+  color: var(--text-main);
+}
+
+.preset-chip.ai-chip {
+  border-color: rgba(253, 200, 48, 0.3);
+}
+
+.preset-chip.ai-chip.active {
+  border-color: rgba(253, 200, 48, 0.7);
+  background: rgba(253, 200, 48, 0.12);
+  color: #fdc830;
+}
+
+.preset-desc {
+  font-size: 0.80rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 6px 0 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border-left: 2px solid rgba(108, 92, 231, 0.4);
+}
+
+.ai-preset-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ai-preset-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: var(--text-main);
+  font-size: 0.82rem;
+  outline: none;
+  min-width: 0;
+}
+
+.ai-preset-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.ai-preset-input:focus {
+  border-color: rgba(108, 92, 231, 0.5);
+}
+
+.ai-preset-gen-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(253, 200, 48, 0.35);
+  background: rgba(253, 200, 48, 0.08);
+  color: #fdc830;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.18s ease;
+}
+
+.ai-preset-gen-btn:hover:not(:disabled) {
+  background: rgba(253, 200, 48, 0.15);
+  border-color: rgba(253, 200, 48, 0.6);
+}
+
+.ai-preset-gen-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
 .section-hint {
   color: var(--text-muted);
   font-size: 0.85rem;

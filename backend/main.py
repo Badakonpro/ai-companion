@@ -1006,7 +1006,103 @@ async def list_story_characters():
     return {"characters": prompt_generator.list_characters()}
 
 
-@app.get("/api/story/seeds")
+@app.get("/api/story/character-presets")
+async def list_character_presets():
+    """Return all available protagonist and heroine presets."""
+    return {
+        "protagonist_presets": prompt_generator.list_protagonist_presets(),
+        "heroine_presets": prompt_generator.list_heroine_presets(),
+    }
+
+
+class GeneratePresetRequest(BaseModel):
+    role: str  # "protagonist" or "heroine"
+    user_hint: str = ""
+    existing_label: str = ""
+
+
+@app.post("/api/story/character-presets/generate")
+async def generate_custom_character_preset(request_body: GeneratePresetRequest):
+    """Use LLM to generate a custom character personality preset."""
+    if request_body.role not in ("protagonist", "heroine"):
+        raise HTTPException(status_code=400, detail="role must be 'protagonist' or 'heroine'")
+
+    role_cn = "男主角" if request_body.role == "protagonist" else "女主角"
+    hint = request_body.user_hint.strip()[:400] if request_body.user_hint else ""
+    hint_block = f"\n用户描述：{hint}" if hint else ""
+
+    system = (
+        "你是一个言情小说人物设定生成器。严格输出 JSON，不输出任何其他文字。"
+    )
+    user_msg = (
+        f"请为一部 Galgame 风格言情互动小说生成一个{role_cn}的性格预设。{hint_block}\n\n"
+        "输出 JSON schema（所有字段必须存在）：\n"
+        '{"label": "3~6字的性格标签", '
+        '"desc": "1~2句话简述性格核心", '
+        '"traits": {"warmth": float, "dominance": float, "rationality": float, "openness": float, "honesty": float}, '
+        '"behavior_patterns": ["行为模式1", "行为模式2", "行为模式3", "行为模式4"], '
+        '"speech_patterns": ["说话特点1", "说话特点2", "说话特点3"], '
+        '"emotional_triggers": {"softens_when": "string", "tenses_when": "string"}, '
+        '"taboos": ["禁忌1", "禁忌2"]}\n\n'
+        "要求：\n"
+        "- traits 五个值均在 0.0~1.0，体现鲜明的性格特征而非全部取中间值\n"
+        "- behavior_patterns 要具体可观察，不要模糊描述\n"
+        "- speech_patterns 要描述语言习惯和口头特征\n"
+        "- taboos 是 AI 写作时必须避免的行为，防止性格崩坏"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                OLLAMA_CHAT_URL,
+                json={
+                    "model": _active_model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg + "\n/no_think"},
+                    ],
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        raise HTTPException(status_code=503, detail=f"model service unavailable: {exc}")
+
+    content = resp.json().get("message", {}).get("content", "")
+    parsed = story_orchestrator._extract_json_block(content)
+    if not parsed or not parsed.get("label"):
+        raise HTTPException(status_code=422, detail="model returned invalid preset JSON")
+
+    # Clamp trait values
+    traits = parsed.get("traits", {})
+    for axis in ("warmth", "dominance", "rationality", "openness", "honesty"):
+        traits[axis] = max(0.0, min(1.0, float(traits.get(axis, 0.5))))
+
+    preset_id = f"{request_body.role}_ai_custom"
+    result = {
+        "id": preset_id,
+        "label": str(parsed.get("label", "AI生成")),
+        "desc": str(parsed.get("desc", "")),
+        "traits": traits,
+        "behavior_patterns": [str(b) for b in parsed.get("behavior_patterns", [])[:6]],
+        "speech_patterns": [str(s) for s in parsed.get("speech_patterns", [])[:5]],
+        "emotional_triggers": {
+            "softens_when": str(parsed.get("emotional_triggers", {}).get("softens_when", "")),
+            "tenses_when": str(parsed.get("emotional_triggers", {}).get("tenses_when", "")),
+        },
+        "taboos": [str(t) for t in parsed.get("taboos", [])[:4]],
+        "ai_generated": True,
+    }
+
+    # Hot-patch in-memory presets so the config takes effect immediately
+    if request_body.role == "protagonist":
+        prompt_generator._protagonist_presets[preset_id] = result
+    else:
+        prompt_generator._heroine_presets[preset_id] = result
+
+    return {"preset": result}
+
+
 async def list_story_seeds():
     return {"seeds": STORY_SEEDS}
 

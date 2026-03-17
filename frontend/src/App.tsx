@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './index.css';
-import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_BLUEPRINT_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, MODEL_CONFIG_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint } from './lib/config';
+import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_BLUEPRINT_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, MODEL_CONFIG_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint, STORY_CHARACTER_PRESETS_ENDPOINT, STORY_CHARACTER_PRESETS_GENERATE_ENDPOINT } from './lib/config';
 
 interface Message {
   id: string;
@@ -94,6 +94,14 @@ interface Snapshot {
   created_at: string;
 }
 
+interface CharacterPreset {
+  id: string;
+  label: string;
+  desc: string;
+  traits: Record<string, number>;
+  ai_generated?: boolean;
+}
+
 interface StoryStreamState {
   narrative: string;
   protagonistAction: string;
@@ -151,7 +159,6 @@ function App() {
   const [sessionId, setSessionId] = useState(() => `sess_${Date.now()}`);
   const [showDashboard, setShowDashboard] = useState(false);
   const [initialAffection, setInitialAffection] = useState(0.3);
-  const [randomPersonality, setRandomPersonality] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -165,6 +172,12 @@ function App() {
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelCustomInput, setModelCustomInput] = useState('');
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const [protagonistPresets, setProtagonistPresets] = useState<CharacterPreset[]>([]);
+  const [heroinePresets, setHeroinePresets] = useState<CharacterPreset[]>([]);
+  const [selectedProtagonistPreset, setSelectedProtagonistPreset] = useState('protagonist_default');
+  const [selectedHeroinePreset, setSelectedHeroinePreset] = useState('linxi_default');
+  const [customPresetHint, setCustomPresetHint] = useState('');
+  const [generatingPreset, setGeneratingPreset] = useState<'protagonist' | 'heroine' | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -215,9 +228,22 @@ function App() {
       }
     };
 
+    const loadCharacterPresets = async () => {
+      try {
+        const resp = await fetch(STORY_CHARACTER_PRESETS_ENDPOINT);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (Array.isArray(data?.protagonist_presets)) setProtagonistPresets(data.protagonist_presets);
+        if (Array.isArray(data?.heroine_presets)) setHeroinePresets(data.heroine_presets);
+      } catch {
+        // non-critical
+      }
+    };
+
     void loadTags();
     void loadSessions();
     void loadModelConfig();
+    void loadCharacterPresets();
   }, []);
 
   // Close model menu on outside click
@@ -264,6 +290,8 @@ function App() {
           nsfw_level: nsfwLevel,
           initial_affection: initialAffection,
           relationship: seed.relationship || selectedRelationship,
+          protagonist_preset_id: selectedProtagonistPreset,
+          heroine_preset_id: selectedHeroinePreset,
         }),
       });
       if (!resp.ok) throw new Error('Blueprint generation failed');
@@ -305,6 +333,8 @@ function App() {
       seed: { id: seed.id, title: seed.title, description: seed.description, world_seed: seed.world_seed },
       nsfw_level: nsfwLevel,
       initial_affection: initialAffection,
+      protagonist_preset_id: selectedProtagonistPreset,
+      heroine_preset_id: selectedHeroinePreset,
     };
 
     // Save session + blueprint in parallel
@@ -402,6 +432,39 @@ function App() {
     );
   };
 
+  const generateCustomPreset = async (role: 'protagonist' | 'heroine') => {
+    setGeneratingPreset(role);
+    try {
+      const resp = await fetch(STORY_CHARACTER_PRESETS_GENERATE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, user_hint: customPresetHint.trim() }),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data?.preset) {
+        const preset = data.preset as CharacterPreset;
+        if (role === 'protagonist') {
+          setProtagonistPresets(prev => {
+            const filtered = prev.filter(p => p.id !== preset.id);
+            return [...filtered, preset];
+          });
+          setSelectedProtagonistPreset(preset.id);
+        } else {
+          setHeroinePresets(prev => {
+            const filtered = prev.filter(p => p.id !== preset.id);
+            return [...filtered, preset];
+          });
+          setSelectedHeroinePreset(preset.id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to generate preset', err);
+    } finally {
+      setGeneratingPreset(null);
+    }
+  };
+
   const generateSeeds = async () => {
     setIsGenerating(true);
     setCandidateSeeds([]);
@@ -414,7 +477,6 @@ function App() {
           nsfw_level: nsfwLevel,
           count: 3,
           user_hint: userHint.trim(),
-          randomize_personality: randomPersonality,
           relationship: selectedRelationship,
         }),
       });
@@ -1000,17 +1062,89 @@ function App() {
                 />
                 <span className="setting-value">{Math.round(initialAffection * 100)}%</span>
               </div>
-              <div className="setting-row">
-                <label className="setting-label">🎲 随机生成女主性格</label>
-                <button
-                  type="button"
-                  className={`toggle-chip ${randomPersonality ? 'active' : ''}`}
-                  onClick={() => setRandomPersonality(!randomPersonality)}
-                >
-                  {randomPersonality ? '开启' : '关闭'}
-                </button>
-              </div>
             </div>
+
+            {/* ── 男主性格预设 ── */}
+            {protagonistPresets.length > 0 && (
+              <div className="preset-group">
+                <div className="preset-group-label">🧑 男主性格</div>
+                <div className="preset-chip-row">
+                  {protagonistPresets.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`preset-chip ${selectedProtagonistPreset === p.id ? 'active' : ''} ${p.ai_generated ? 'ai-chip' : ''}`}
+                      title={p.desc}
+                      onClick={() => setSelectedProtagonistPreset(p.id)}
+                    >
+                      {p.ai_generated ? '✨ ' : ''}{p.label}
+                    </button>
+                  ))}
+                </div>
+                {selectedProtagonistPreset && (() => {
+                  const p = protagonistPresets.find(x => x.id === selectedProtagonistPreset);
+                  return p ? <div className="preset-desc">{p.desc}</div> : null;
+                })()}
+                <div className="ai-preset-row">
+                  <input
+                    className="ai-preset-input"
+                    placeholder="描述你想要的男主性格（可选）..."
+                    value={customPresetHint}
+                    onChange={e => setCustomPresetHint(e.target.value)}
+                    maxLength={200}
+                  />
+                  <button
+                    type="button"
+                    className="ai-preset-gen-btn"
+                    disabled={generatingPreset === 'protagonist'}
+                    onClick={() => void generateCustomPreset('protagonist')}
+                  >
+                    {generatingPreset === 'protagonist' ? '生成中...' : '✨ AI生成'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── 女主性格预设 ── */}
+            {heroinePresets.length > 0 && (
+              <div className="preset-group">
+                <div className="preset-group-label">👩 女主性格</div>
+                <div className="preset-chip-row">
+                  {heroinePresets.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`preset-chip ${selectedHeroinePreset === p.id ? 'active' : ''} ${p.ai_generated ? 'ai-chip' : ''}`}
+                      title={p.desc}
+                      onClick={() => setSelectedHeroinePreset(p.id)}
+                    >
+                      {p.ai_generated ? '✨ ' : ''}{p.label}
+                    </button>
+                  ))}
+                </div>
+                {selectedHeroinePreset && (() => {
+                  const p = heroinePresets.find(x => x.id === selectedHeroinePreset);
+                  return p ? <div className="preset-desc">{p.desc}</div> : null;
+                })()}
+                <div className="ai-preset-row">
+                  <input
+                    className="ai-preset-input"
+                    placeholder="描述你想要的女主性格（可选）..."
+                    value={customPresetHint}
+                    onChange={e => setCustomPresetHint(e.target.value)}
+                    maxLength={200}
+                  />
+                  <button
+                    type="button"
+                    className="ai-preset-gen-btn"
+                    disabled={generatingPreset === 'heroine'}
+                    onClick={() => void generateCustomPreset('heroine')}
+                  >
+                    {generatingPreset === 'heroine' ? '生成中...' : '✨ AI生成'}
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="lobby-section">
