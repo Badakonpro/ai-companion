@@ -2,6 +2,7 @@
   "name": "ai-companion",
   "version": "0.5.1",
   "description": "AI Companion – Galgame-style desktop app",
+  "author": "Badakonpro",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -39,6 +40,8 @@
     "mac": {
       "category": "public.app-category.entertainment",
       "icon": "assets/icon.png",
+      "signIgnore": ["backend/venv"],
+      "identity": null,
       "target": [
         "dmg"
       ]
