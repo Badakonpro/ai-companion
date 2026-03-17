@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './index.css';
-import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint } from './lib/config';
+import { SESSIONS_ENDPOINT, STORY_SEEDS_GENERATE_ENDPOINT, STORY_STREAM_ENDPOINT, STORY_TAGS_ENDPOINT, STORY_TURN_ENDPOINT, MODEL_CONFIG_ENDPOINT, snapshotsEndpoint, restoreSnapshotEndpoint } from './lib/config';
 
 interface Message {
   id: string;
@@ -76,6 +76,16 @@ interface StoryStreamState {
 type AppStage = 'lobby' | 'story';
 type NsfwLevel = 'mild' | 'moderate' | 'explicit';
 
+const MODEL_PRESETS: Array<{ id: string; label: string }> = [
+  { id: 'sorc/qwen3.5-instruct-heretic', label: 'Qwen 3.5 Heretic（默认）' },
+  { id: 'qwen2.5:7b',                   label: 'Qwen 2.5 7B' },
+  { id: 'qwen2.5:14b',                  label: 'Qwen 2.5 14B' },
+  { id: 'llama3.2:3b',                  label: 'Llama 3.2 3B' },
+  { id: 'llama3.1:8b',                  label: 'Llama 3.1 8B' },
+  { id: 'mistral:7b',                   label: 'Mistral 7B' },
+  { id: 'gemma3:4b',                    label: 'Gemma 3 4B' },
+];
+
 const NSFW_LABELS: Record<NsfwLevel, string> = {
   mild: '🌙 轻度暧昧',
   moderate: '🔥 中度情欲',
@@ -120,6 +130,10 @@ function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [snapshotSaving, setSnapshotSaving] = useState(false);
+  const [activeModel, setActiveModel] = useState('sorc/qwen3.5-instruct-heretic');
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelCustomInput, setModelCustomInput] = useState('');
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -156,9 +170,49 @@ function App() {
       }
     };
 
+    const loadModelConfig = async () => {
+      try {
+        const resp = await fetch(MODEL_CONFIG_ENDPOINT);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data?.active_model) setActiveModel(data.active_model);
+      } catch {
+        // backend not ready yet, keep default
+      }
+    };
+
     void loadTags();
     void loadSessions();
+    void loadModelConfig();
   }, []);
+
+  // Close model menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target as Node)) {
+        setShowModelMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const applyModel = async (modelId: string) => {
+    try {
+      const resp = await fetch(MODEL_CONFIG_ENDPOINT, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      if (resp.ok) {
+        setActiveModel(modelId);
+        setShowModelMenu(false);
+        setModelCustomInput('');
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   const startFromSeed = (seed: StorySeed) => {
     const newSessionId = `sess_${Date.now()}`;
@@ -717,6 +771,58 @@ function App() {
             <div className="persona-details">
               <h2>剧本工坊</h2>
               <p><span className="status-indicator online"></span> 选择标签 → AI 生成剧本 → 开始故事</p>
+            </div>
+          </div>
+          <div className="header-actions">
+            <div className="model-selector" ref={modelMenuRef}>
+              <button
+                type="button"
+                className="model-selector-btn"
+                onClick={() => setShowModelMenu(prev => !prev)}
+                title="切换推理模型"
+              >
+                🤖 {MODEL_PRESETS.find(p => p.id === activeModel)?.label ?? activeModel}
+              </button>
+              {showModelMenu && (
+                <div className="model-menu">
+                  <div className="model-menu-title">选择推理模型</div>
+                  {MODEL_PRESETS.map(preset => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`model-menu-item ${activeModel === preset.id ? 'active' : ''}`}
+                      onClick={() => void applyModel(preset.id)}
+                    >
+                      {activeModel === preset.id && <span className="model-check">✓</span>}
+                      <span className="model-item-label">{preset.label}</span>
+                      <span className="model-item-id">{preset.id}</span>
+                    </button>
+                  ))}
+                  <div className="model-menu-divider" />
+                  <div className="model-custom-row">
+                    <input
+                      className="model-custom-input"
+                      type="text"
+                      placeholder="自定义模型名称…"
+                      value={modelCustomInput}
+                      onChange={e => setModelCustomInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && modelCustomInput.trim()) {
+                          void applyModel(modelCustomInput.trim());
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="model-custom-apply"
+                      disabled={!modelCustomInput.trim()}
+                      onClick={() => void applyModel(modelCustomInput.trim())}
+                    >
+                      应用
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>

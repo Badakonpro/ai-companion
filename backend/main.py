@@ -89,6 +89,9 @@ except ImportError:
 app = FastAPI(title="AI Persona MVP")
 event_store = EventStore(SQLITE_DB_PATH)
 story_orchestrator = StoryOrchestrator(OLLAMA_CHAT_URL, OLLAMA_MODEL, REQUEST_TIMEOUT_SECONDS)
+
+# Runtime-mutable active model (starts from config default)
+_active_model: str = OLLAMA_MODEL
 consistency_guard = ConsistencyGuard()
 prompt_generator = PromptGenerator(STORAGE_DIR / "character_config.json")
 memory_manager = MemoryManager(event_store)
@@ -120,7 +123,7 @@ async def _try_summarize(session_id: str, turn_count: int, arc_number: int) -> N
             resp = await client.post(
                 OLLAMA_CHAT_URL,
                 json={
-                    "model": OLLAMA_MODEL,
+                    "model": _active_model,
                     "messages": [
                         {"role": "system", "content": "你是一个叙事记忆压缩器。请严格输出JSON。"},
                         {"role": "user", "content": prompt},
@@ -731,6 +734,40 @@ async def reset_metrics():
     perf.reset()
     l1_cache.clear()
     return {"ok": True}
+
+
+MODEL_PRESETS: list[dict] = [
+    {"id": "sorc/qwen3.5-instruct-heretic", "label": "Qwen 3.5 Heretic（默认）"},
+    {"id": "qwen2.5:7b",                   "label": "Qwen 2.5 7B"},
+    {"id": "qwen2.5:14b",                  "label": "Qwen 2.5 14B"},
+    {"id": "llama3.2:3b",                  "label": "Llama 3.2 3B"},
+    {"id": "llama3.1:8b",                  "label": "Llama 3.1 8B"},
+    {"id": "mistral:7b",                   "label": "Mistral 7B"},
+    {"id": "gemma3:4b",                    "label": "Gemma 3 4B"},
+]
+
+
+class ModelConfigRequest(BaseModel):
+    model: str = Field(..., min_length=1, max_length=200)
+
+
+@app.get("/api/config/model")
+async def get_model_config():
+    """Return active model and preset list."""
+    return {"active_model": _active_model, "presets": MODEL_PRESETS}
+
+
+@app.put("/api/config/model")
+async def set_model_config(req: ModelConfigRequest):
+    """Switch the active LLM model at runtime."""
+    global _active_model
+    model = req.model.strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model must not be empty")
+    _active_model = model
+    story_orchestrator.model_name = model
+    logger.info("Model switched", extra={"endpoint": "/api/config/model", "session_id": "-", "tokens": {"model": model}})
+    return {"active_model": _active_model}
 
 
 @app.get("/api/sessions")
