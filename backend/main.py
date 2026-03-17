@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
@@ -46,6 +46,7 @@ try:
     from .core.perf_cache import l1_cache
     from .core.perf_metrics import perf
     from .core.rate_limiter import RateLimiter
+    from .core.protagonist_profiler import ProtagonistProfiler
     from .persona import SYSTEM_PROMPT
     from .config import STORAGE_DIR
     from .logger import logger
@@ -82,6 +83,7 @@ except ImportError:
     from core.perf_cache import l1_cache  # type: ignore
     from core.perf_metrics import perf  # type: ignore
     from core.rate_limiter import RateLimiter  # type: ignore
+    from core.protagonist_profiler import ProtagonistProfiler  # type: ignore
     from persona import SYSTEM_PROMPT  # type: ignore
     from config import STORAGE_DIR  # type: ignore
     from logger import logger  # type: ignore
@@ -104,6 +106,7 @@ vector_store = VectorStore(
     ollama_base_url=ollama_base_url(),
 )
 arc_manager = ArcManager(event_store, vector_store)
+protagonist_profiler = ProtagonistProfiler(event_store)
 rate_limiter = RateLimiter(max_requests=RATE_LIMIT_PER_MINUTE, window_seconds=60.0)
 
 logger.info("Backend starting", extra={
@@ -197,6 +200,14 @@ class SeedGenerateRequest(BaseModel):
     count: int = 3
     user_hint: str = ""
     randomize_personality: bool = False
+    relationship: str = ""  # 初始关系类型
+
+
+class BlueprintRequest(BaseModel):
+    seed: dict[str, Any]
+    nsfw_level: str = "mild"
+    initial_affection: float = 0.3
+    relationship: str = ""
 
 
 class StoryTurnRequest(BaseModel):
@@ -306,10 +317,14 @@ async def story_turn_endpoint(request: StoryTurnRequest):
             facts_fut = asyncio.to_thread(event_store.get_session_facts, request.session_id)
             memory_fut = asyncio.to_thread(memory_manager.assemble_memory_context, request.session_id)
             emotion_fut = asyncio.to_thread(emotion_engine.get_emotion, request.session_id, 'linxi')
+            profile_fut = asyncio.to_thread(protagonist_profiler.get_profile, request.session_id)
+            blueprint_fut = asyncio.to_thread(event_store.get_blueprint, request.session_id)
 
-            current_state, existing_facts, memory_ctx, linxi_emotion = await asyncio.gather(
-                state_fut, facts_fut, memory_fut, emotion_fut,
+            current_state, existing_facts, memory_ctx, linxi_emotion, mc_profile, blueprint = await asyncio.gather(
+                state_fut, facts_fut, memory_fut, emotion_fut, profile_fut, blueprint_fut,
             )
+
+        protagonist_desc = protagonist_profiler.describe_protagonist(mc_profile)
 
         # Arc awareness
         arc = await asyncio.to_thread(
@@ -341,6 +356,8 @@ async def story_turn_endpoint(request: StoryTurnRequest):
             active_character_ids,
             constraints,
             memory_block=memory_block,
+            protagonist_desc=protagonist_desc,
+            blueprint=blueprint,
         )
 
         with perf.measure("llm_generate"):
@@ -384,6 +401,8 @@ async def story_turn_endpoint(request: StoryTurnRequest):
                         active_character_ids,
                         retry_constraints,
                         memory_block=memory_block,
+                        protagonist_desc=protagonist_desc,
+                        blueprint=blueprint,
                     ),
                     active_character_ids=active_character_ids,
                     world_seed=resolved_world_seed,
@@ -409,7 +428,7 @@ async def story_turn_endpoint(request: StoryTurnRequest):
 
             turn_count = len(event_store.get_session_history(request.session_id)) + 1
 
-            # Parallel: episode extraction + emotion update (independent)
+            # Parallel: episode extraction + emotion update + protagonist profile (independent)
             await asyncio.gather(
                 asyncio.to_thread(
                     memory_manager.extract_episodes_from_narrative,
@@ -418,6 +437,10 @@ async def story_turn_endpoint(request: StoryTurnRequest):
                 asyncio.to_thread(
                     emotion_engine.update_emotion,
                     request.session_id, turn_count, generated_text, request.user_input,
+                ),
+                asyncio.to_thread(
+                    protagonist_profiler.update_from_choice,
+                    request.session_id, request.selected_choice_id or "", request.user_input,
                 ),
             )
 
@@ -498,12 +521,16 @@ async def story_turn_stream_endpoint(request: StoryTurnRequest):
 
         # ── Parallel pre-generation reads ───────────────────────────
         with perf.measure("stream_pre_gen"):
-            current_state, existing_facts, memory_ctx, linxi_emotion = await asyncio.gather(
+            current_state, existing_facts, memory_ctx, linxi_emotion, mc_profile, blueprint = await asyncio.gather(
                 asyncio.to_thread(event_store.get_session_state, request.session_id),
                 asyncio.to_thread(event_store.get_session_facts, request.session_id),
                 asyncio.to_thread(memory_manager.assemble_memory_context, request.session_id),
                 asyncio.to_thread(emotion_engine.get_emotion, request.session_id, 'linxi'),
+                asyncio.to_thread(protagonist_profiler.get_profile, request.session_id),
+                asyncio.to_thread(event_store.get_blueprint, request.session_id),
             )
+
+        protagonist_desc = protagonist_profiler.describe_protagonist(mc_profile)
 
         # Arc awareness
         arc = await asyncio.to_thread(
@@ -535,6 +562,8 @@ async def story_turn_stream_endpoint(request: StoryTurnRequest):
             active_character_ids,
             constraints,
             memory_block=memory_block,
+            protagonist_desc=protagonist_desc,
+            blueprint=blueprint,
         )
 
         async def event_generator():
@@ -593,7 +622,7 @@ async def story_turn_stream_endpoint(request: StoryTurnRequest):
             # ── Background-friendly post-gen: episode + emotion in parallel ─
             turn_count = len(event_store.get_session_history(request.session_id)) + 1
 
-            _, updated_emotion = await asyncio.gather(
+            _, updated_emotion, _ = await asyncio.gather(
                 asyncio.to_thread(
                     memory_manager.extract_episodes_from_narrative,
                     request.session_id, turn_count, generated_text,
@@ -601,6 +630,10 @@ async def story_turn_stream_endpoint(request: StoryTurnRequest):
                 asyncio.to_thread(
                     emotion_engine.update_emotion,
                     request.session_id, turn_count, generated_text, request.user_input,
+                ),
+                asyncio.to_thread(
+                    protagonist_profiler.update_from_choice,
+                    request.session_id, request.selected_choice_id or "", request.user_input,
                 ),
             )
 
@@ -958,6 +991,15 @@ async def list_story_seeds():
     return {"seeds": STORY_SEEDS}
 
 
+@app.put("/api/sessions/{session_id}/blueprint")
+async def save_session_blueprint(session_id: str, body: dict[str, Any] = Body(...)):
+    bp = body.get("blueprint")
+    if not bp:
+        raise HTTPException(status_code=400, detail="blueprint is required")
+    await asyncio.to_thread(event_store.save_blueprint, session_id, bp)
+    return {"ok": True}
+
+
 _NSFW_LEVEL_DESC = {
     "mild": "轻度暧昧：允许含蓄的暗示、肢体接触描写（牵手、拥抱、亲吻），情感张力暗涌但不直接描写性行为。",
     "moderate": "中度情欲：允许较为直白的亲密场景，包括暗示性的身体描写与情欲对话，可以有激烈的肢体交互但不做极端细节。",
@@ -983,10 +1025,25 @@ _THEME_TAGS = [
     {"id": "showbiz", "label": "娱乐圈", "icon": "🎬"},
 ]
 
+_RELATIONSHIP_TYPES = [
+    {"id": "strangers",    "label": "陌生人",   "icon": "👤", "desc": "毫无交集的两个人，一次偶然相遇"},
+    {"id": "classmates",   "label": "同学",     "icon": "📚", "desc": "同班或同校，认识但不熟"},
+    {"id": "colleagues",   "label": "同事",     "icon": "💼", "desc": "同一公司，工作中接触"},
+    {"id": "neighbors",    "label": "邻居",     "icon": "🏘️", "desc": "住在隔壁或同一小区"},
+    {"id": "childhood",    "label": "青梅竹马",  "icon": "🌸", "desc": "从小一起长大，互相了解"},
+    {"id": "exlovers",     "label": "前任",     "icon": "💔", "desc": "曾经在一起，分手后重逢"},
+    {"id": "boss_sub",     "label": "上下级",   "icon": "👔", "desc": "职场中的上司与下属关系"},
+    {"id": "rivals",       "label": "对手",     "icon": "⚔️", "desc": "某种竞争关系中的对手"},
+    {"id": "benefactor",   "label": "恩人/被救", "icon": "🤝", "desc": "一方曾帮助过另一方"},
+    {"id": "contract",     "label": "契约关系",  "icon": "📜", "desc": "因某种约定或交易绑定"},
+    {"id": "online_meet",  "label": "网友奔现",  "icon": "📱", "desc": "网络上认识后第一次线下见面"},
+    {"id": "master_student","label": "师徒",    "icon": "🎓", "desc": "教学或指导关系"},
+]
+
 
 @app.get("/api/story/tags")
 async def list_theme_tags():
-    return {"tags": _THEME_TAGS}
+    return {"tags": _THEME_TAGS, "relationships": _RELATIONSHIP_TYPES}
 
 
 @app.post("/api/story/seeds/generate")
@@ -1008,28 +1065,48 @@ async def generate_story_seed(request: SeedGenerateRequest):
     hint_line = f"【用户额外要求】{request.user_hint.strip()}\n" if request.user_hint.strip() else ""
     personality_line = (
         "【性格随机化】请为林夕随机生成一个独特性格（不要总是外冷内热），可以是：活泼开朗、病娇偏执、天然呆、学霸高冷、"
-        "温柔治愈、傲娇大小姐、社恐内向、腹黑毒舌等。在 world_seed 中明确描述她的性格和说话风格。\n"
+        "温柔治愈、傲娇大小姐、社恐内向、腹黑毒舌等。在 personality 和 heroine_bio 中体现。\n"
     ) if request.randomize_personality else ""
 
+    # Resolve relationship type
+    rel_label = ""
+    if request.relationship:
+        rel_item = next((r for r in _RELATIONSHIP_TYPES if r["id"] == request.relationship), None)
+        if rel_item:
+            rel_label = f"【初始关系】{rel_item['label']}：{rel_item['desc']}\n"
+
     system_prompt = (
-        "你是一位言情互动小说的世界观架构师。"
-        f"请根据以下要求，输出 {count} 个风格各异的剧本种子，格式为严格 JSON 数组，不要输出任何额外文字。\n\n"
+        "你是一位言情互动小说的世界观架构师与剧本策划。\n"
+        f"请根据以下维度约束，输出 {count} 个风格各异的剧本种子。\n"
+        "输出严格 JSON 数组，不要输出 JSON 以外的任何文字。\n\n"
+        "=== 约束维度 ===\n"
         f"【NSFW档位】{level} — {nsfw_desc}\n"
-        '【核心类型】言情 / 情感驱动 / Galgame风格。玩家是男主角（第二人称"你"），"林夕"是女主角。\n'
+        f"【题材】{tags_line}\n"
+        f"{rel_label}"
         f"{personality_line}"
-        f"【题材要求】{tags_line}\n"
         f"{hint_line}"
-        "世界观应融入情感暗线、人物张力和暧昧或情欲元素（根据档位决定尺度）。\n"
-        f"每个种子的风格、场景、时代背景应尽量不同，给用户多样化选择。\n\n"
-        "JSON 输出格式（数组，每个元素）:\n"
-        '[{"title": string, "description": string(50字以内剧情提要), '
-        '"world_seed": string(100-200字世界观描述，包含场景、人物关系初始状态和情感张力起点), '
-        '"personality": string(15字以内的林夕性格标签，例如"外冷内热""活泼开朗")}]\n'
-        f"请输出恰好 {count} 个种子。确保 world_seed 足够具体，能够直接用于开局叙事。"
+        '【核心类型】言情 / 情感驱动 / Galgame风格。玩家是男主角（"你"，第二人称），林夕是女主角。\n\n'
+        "=== 每个种子必须包含以下字段 ===\n"
+        "1. title: 剧本名称（8字以内，有吸引力）\n"
+        "2. description: 50字以内的剧情提要\n"
+        '3. genre: 题材风格标签（如"校园暗恋""职场禁忌""都市悬疑"等）\n'
+        "4. personality: 林夕在此剧本中的性格标签（15字以内）\n"
+        '5. relationship: 男女主的初始关系（如"同班同学""前任重逢""甲方乙方"等，20字以内）\n'
+        "6. protagonist_type: 男主角的初始设定（25字以内，例如：沉默寡言的转校生 / 新来的项目经理）\n"
+        "7. heroine_bio: 林夕的具体人设（50字，包括身份、性格特点、说话风格、核心矛盾）\n"
+        "8. world_seed: 150-250字的完整世界观描述，必须包含：\n"
+        "   - 具体的时间地点和场景氛围\n"
+        "   - 两人的初始关系状态和情感距离\n"
+        "   - 隐藏的矛盾或悬念（作为情感张力的引擎）\n"
+        "   - 第一幕的开场情境（让故事能直接启动）\n"
+        "9. key_routes: 数组，4条可能的剧情路线，每条包含：\n"
+        '   {"route": "路线名", "tone": "基调", "preview": "30字路线预览"}\n'
+        '   路线示例：纯爱线/支配线/决裂线/救赎线/疯批线/暗黑线/治愈线\n\n'
+        f"请输出恰好 {count} 个种子，每个的世界观、人设、初始关系尽量不同。"
     )
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": _active_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请生成 {count} 个全新的言情剧本种子。 /no_think"},
@@ -1044,15 +1121,11 @@ async def generate_story_seed(request: SeedGenerateRequest):
 
         content = response.json().get("message", {}).get("content", "")
 
-        # Try to extract JSON array
         import re as _re_mod
         import time as _time_mod
         seeds: list[dict] = []
 
-        # Strip <think>...</think> blocks (common in reasoning models)
         stripped = _re_mod.sub(r"<think>[\s\S]*?</think>", "", content).strip()
-
-        # Strip code fences
         if stripped.startswith("```"):
             lines = stripped.splitlines()
             if len(lines) >= 3:
@@ -1062,7 +1135,6 @@ async def generate_story_seed(request: SeedGenerateRequest):
         try:
             parsed = json.loads(stripped)
         except json.JSONDecodeError:
-            # Find JSON array
             start = stripped.find("[")
             end = stripped.rfind("]")
             if start != -1 and end != -1 and end > start:
@@ -1072,7 +1144,6 @@ async def generate_story_seed(request: SeedGenerateRequest):
                     pass
 
         if parsed is None:
-            # Fallback: find any JSON object with world_seed
             for m in _re_mod.finditer(r'\{[^{}]*"world_seed"[^{}]*\}', stripped):
                 try:
                     obj = json.loads(m.group())
@@ -1084,7 +1155,6 @@ async def generate_story_seed(request: SeedGenerateRequest):
                     continue
 
         if parsed is None:
-            # Last resort: try single object via orchestrator helper
             single = story_orchestrator._extract_json_block(content)
             if single and single.get("world_seed"):
                 parsed = [single]
@@ -1102,8 +1172,13 @@ async def generate_story_seed(request: SeedGenerateRequest):
                 "id": f"ai_{int(_time_mod.time() * 1000)}_{idx}",
                 "title": str(item.get("title", "AI生成剧本")).strip(),
                 "description": str(item.get("description", "")).strip(),
-                "world_seed": str(item.get("world_seed", "")).strip(),
+                "genre": str(item.get("genre", "")).strip(),
                 "personality": str(item.get("personality", "外冷内热")).strip(),
+                "relationship": str(item.get("relationship", "")).strip(),
+                "protagonist_type": str(item.get("protagonist_type", "")).strip(),
+                "heroine_bio": str(item.get("heroine_bio", "")).strip(),
+                "world_seed": str(item.get("world_seed", "")).strip(),
+                "key_routes": item.get("key_routes", []),
                 "nsfw_level": level,
                 "ai_generated": True,
             })
@@ -1112,6 +1187,105 @@ async def generate_story_seed(request: SeedGenerateRequest):
             raise HTTPException(status_code=502, detail="AI 未能生成有效的剧本种子，请重试")
 
         return {"seeds": seeds}
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="cannot connect to model service")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="model service timeout")
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"model service error: {exc.response.text}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/story/blueprint")
+async def generate_blueprint(request: BlueprintRequest):
+    """Phase 2: 玩家选择种子后，生成完整的剧本蓝图（角色详情+故事节点+路线分支）。"""
+    seed = request.seed
+    if not seed.get("world_seed"):
+        raise HTTPException(status_code=400, detail="seed must contain world_seed")
+
+    level = request.nsfw_level if request.nsfw_level in _NSFW_LEVEL_DESC else "mild"
+    nsfw_desc = _NSFW_LEVEL_DESC[level]
+
+    system_prompt = (
+        "你是一位专业的互动小说剧本策划。\n"
+        "根据下面提供的剧本种子，生成完整的剧本蓝图。\n"
+        "输出严格 JSON，不要输出 JSON 以外的任何文字。\n\n"
+        f"【NSFW档位】{level} — {nsfw_desc}\n\n"
+        "=== 剧本种子 ===\n"
+        f"标题：{seed.get('title', '')}\n"
+        f"世界观：{seed.get('world_seed', '')}\n"
+        f"林夕人设：{seed.get('heroine_bio', seed.get('personality', ''))}\n"
+        f"男主类型：{seed.get('protagonist_type', '玩家自定义')}\n"
+        f"初始关系：{seed.get('relationship', '未指定')}\n"
+        f"初始好感度：{request.initial_affection:.0%}\n\n"
+        "=== 输出结构 ===\n"
+        "生成一个 JSON 对象包含以下字段：\n\n"
+        "1. heroine_detail: 林夕的完整人设（200字），包含：\n"
+        "   - 外在形象、穿着风格\n"
+        "   - 说话风格与口头禅（举例3句典型台词）\n"
+        "   - 内心世界（核心恐惧/渴望/矛盾）\n"
+        "   - 对男主的初始态度\n\n"
+        "2. protagonist_hooks: 数组，3个男主可能的性格方向：\n"
+        '   [{"type": "温柔守护型", "effect_on_heroine": "会逐渐卸下防备"}, ...]\n\n'
+        "3. story_nodes: 数组，6-8个关键剧情节点（按时间线排列），每个：\n"
+        "   {\n"
+        '     "node_id": 1~8的编号,\n'
+        '     "title": "节点标题",\n'
+        '     "description": "50字节点描述——这里会发生什么",\n'
+        '     "trigger_condition": "什么情况下会触发此节点",\n'
+        '     "emotional_stakes": "此处的情感风险/赌注是什么",\n'
+        '     "branch_choices": [\n'
+        '       {"direction": "纯爱", "action": "玩家应该怎么做", "consequence": "导致什么"},\n'
+        '       {"direction": "支配", "action": "...", "consequence": "..."},\n'
+        '       {"direction": "决裂", "action": "...", "consequence": "..."}\n'
+        "     ]\n"
+        "   }\n\n"
+        "4. route_map: 4条完整路线的描述，每条：\n"
+        "   {\n"
+        '     "route_name": "纯爱线",\n'
+        '     "tone": "温暖治愈",\n'
+        '     "key_moments": "路线的3个关键转折点概述",\n'
+        '     "ending_preview": "这条线的结局走向（30字）"\n'
+        "   }\n\n"
+        "5. opening_scene: 开场第一幕的详细设定（100字），描述第一个场景的具体画面，\n"
+        "   包括时间、地点、天气、男主正在做什么、林夕是怎么出场的。\n\n"
+        "要求：节点之间要有因果逻辑；不同路线的分歧应该由玩家的关键选择决定；\n"
+        "每个节点的 branch_choices 要体现不同性格方向的选择差异。"
+    )
+
+    payload = {
+        "model": _active_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "请根据种子信息生成完整的剧本蓝图。 /no_think"},
+        ],
+        "stream": False,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            response = await client.post(OLLAMA_CHAT_URL, json=payload)
+            response.raise_for_status()
+
+        content = response.json().get("message", {}).get("content", "")
+        parsed = story_orchestrator._extract_json_block(content)
+        if not parsed:
+            raise HTTPException(status_code=502, detail="AI 未能生成有效的剧本蓝图，请重试")
+
+        # Persist blueprint if session_id is available in seed
+        blueprint = {
+            "seed": seed,
+            "heroine_detail": parsed.get("heroine_detail", ""),
+            "protagonist_hooks": parsed.get("protagonist_hooks", []),
+            "story_nodes": parsed.get("story_nodes", []),
+            "route_map": parsed.get("route_map", []),
+            "opening_scene": parsed.get("opening_scene", ""),
+        }
+
+        return {"blueprint": blueprint}
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="cannot connect to model service")
     except httpx.TimeoutException:
