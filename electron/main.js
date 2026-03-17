@@ -60,6 +60,11 @@ function waitForBackend(retries = 30) {
         setTimeout(() => check(n - 1), 1000);
       });
       req.on("error", () => setTimeout(() => check(n - 1), 1000));
+      // Destroy socket if server accepts connection but never sends headers
+      req.setTimeout(2000, () => {
+        req.destroy();
+        setTimeout(() => check(n - 1), 500);
+      });
     };
     check(retries);
   });

@@ -7,5 +7,5 @@ onnxruntime
 # onnxruntime-openvino # uncomment on PC for Intel NPU support
 # onnxruntime-silicon # alternative for Mac if relying tightly on CoreML
 python-dotenv
-apsw
+apsw>=3.42.0
 sqlite-vss

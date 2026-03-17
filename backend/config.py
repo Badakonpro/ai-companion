@@ -43,7 +43,7 @@ RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
 ALERT_P95_MS = float(os.getenv("ALERT_P95_MS", "10000"))
 ALERT_ERROR_RATE = float(os.getenv("ALERT_ERROR_RATE", "0.1"))
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 
 
 def ollama_base_url() -> str:
