@@ -64,11 +64,11 @@ class StoryOrchestrator:
                 f"你注意到她的手指微微缩了一下。{user_input}"
             ),
             "choices": [
-                {"id": "c1", "title": "脱下外套披在她身上", "description": "用行动代替言语，拉近距离。"},
-                {"id": "c2", "title": "假装没注意，聊点别的", "description": "维持现状，不打破微妙的平衡。"},
-                {"id": "c3", "title": "直接问她为什么折回来", "description": "正面出击，逼她说出真实想法。"},
-                {"id": "c4", "title": "走过去站在她旁边沉默", "description": "无声陪伴，让她自己选择是否开口。"},
-                {"id": "c5", "title": "提议一起去吃点东西", "description": "转移场景，创造更轻松的氛围。"},
+                {"id": "c1", "title": "脱下外套披在她身上", "description": "用行动代替言语，拉近距离。", "route_hint": "纯爱"},
+                {"id": "c2", "title": "假装没注意，聊点别的", "description": "维持现状，不打破微妙的平衡。", "route_hint": "探索"},
+                {"id": "c3", "title": "直接问她为什么折回来", "description": "正面出击，逼她说出真实想法。", "route_hint": "支配"},
+                {"id": "c4", "title": "走过去站在她旁边沉默", "description": "无声陪伴，让她自己选择是否开口。", "route_hint": "救赎"},
+                {"id": "c5", "title": "提议一起去吃点东西", "description": "转移场景，创造更轻松的氛围。", "route_hint": "探索"},
             ],
             "state_delta": {"tension": 0.05, "trust": 0.0, "progress": 0.03},
         }
@@ -152,6 +152,7 @@ class StoryOrchestrator:
                         "id": str(choice.get("id") or f"choice_{idx + 1}"),
                         "title": title,
                         "description": str(choice.get("description", "")).strip(),
+                        "route_hint": str(choice.get("route_hint", "")).strip(),
                     }
                 )
 
@@ -309,6 +310,7 @@ class StoryOrchestrator:
                         "id": str(choice.get("id") or f"choice_{idx + 1}"),
                         "title": title,
                         "description": str(choice.get("description", "")).strip(),
+                        "route_hint": str(choice.get("route_hint", "")).strip(),
                     }
                 )
 

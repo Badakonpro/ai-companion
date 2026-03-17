@@ -161,7 +161,7 @@ class PromptGenerator:
         if progress < 0.2:
             # Early game: choices about establishing relationship
             base += (
-                "   ▸ 当前处于【开局期】，选项应围绕"如何建立第一印象"：\n"
+                '   ▸ 当前处于【开局期】，选项应围绕"如何建立第一印象"：\n'
                 "     - 至少1个'主动靠近'方向（纯爱/救赎倾向）\n"
                 "     - 至少1个'保持距离观察'方向（理性/探索倾向）\n"
                 "     - 至少1个'制造冲突或紧张'方向（支配/决裂倾向）\n"
@@ -170,7 +170,7 @@ class PromptGenerator:
         elif progress < 0.5:
             # Mid game: choices about deepening or changing direction
             base += (
-                "   ▸ 当前处于【发展期】，选项应围绕"关系向哪个方向深入"：\n"
+                '   ▸ 当前处于【发展期】，选项应围绕"关系向哪个方向深入"：\n'
                 "     - 纯爱方向：温柔、坦诚、给予安全感\n"
                 "     - 支配方向：掌控、试探、设定边界\n"
                 "     - 决裂方向：对抗、质疑、打破现状\n"
