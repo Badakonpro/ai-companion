@@ -651,33 +651,53 @@ async def story_turn_stream_endpoint(request: StoryTurnRequest):
 
             yield "event: done\ndata: {}\n\n"
 
-            # Fire-and-forget: log turn + touch session
-            await asyncio.to_thread(
-                event_store.log_story_turn,
-                session_id=request.session_id,
-                user_input=request.user_input,
-                narrative=turn_meta.get("narrative", ""),
-                protagonist_action=turn_meta.get("protagonist_action", ""),
-                choices=turn_meta.get("choices", []),
-                state_delta=turn_meta.get("state_delta", {}),
-                model_used=turn_meta.get("model", ""),
-                metadata={
-                    "source": "/api/story/turn/stream",
-                    "selected_choice_id": request.selected_choice_id,
-                    "facts_count": len(merged_facts),
-                },
-            )
-            event_store.touch_session(request.session_id)
+            # Fire-and-forget: all post-done work runs in a background task so
+            # the generator (and HTTP body) closes immediately after 'done'.
+            _t_total = t_stream_start
+            _snap = {
+                "session_id": request.session_id,
+                "user_input": request.user_input,
+                "narrative": turn_meta.get("narrative", ""),
+                "protagonist_action": turn_meta.get("protagonist_action", ""),
+                "choices": turn_meta.get("choices", []),
+                "state_delta": turn_meta.get("state_delta", {}),
+                "model_used": turn_meta.get("model", ""),
+                "selected_choice_id": request.selected_choice_id,
+                "facts_count": len(merged_facts),
+                "turn_count": turn_count,
+                "arc_number": active_arc_number,
+                "generated_text": generated_text,
+            }
 
-            # Vector indexing + periodic summarization (best-effort)
-            await asyncio.to_thread(
-                arc_manager.index_turn, request.session_id, turn_count,
-                generated_text, active_arc_number,
-            )
-            if memory_manager.should_summarize(request.session_id):
-                await _try_summarize(request.session_id, turn_count, active_arc_number)
+            async def _post_done_work(snap: dict, t0: float) -> None:
+                try:
+                    await asyncio.to_thread(
+                        event_store.log_story_turn,
+                        session_id=snap["session_id"],
+                        user_input=snap["user_input"],
+                        narrative=snap["narrative"],
+                        protagonist_action=snap["protagonist_action"],
+                        choices=snap["choices"],
+                        state_delta=snap["state_delta"],
+                        model_used=snap["model_used"],
+                        metadata={
+                            "source": "/api/story/turn/stream",
+                            "selected_choice_id": snap["selected_choice_id"],
+                            "facts_count": snap["facts_count"],
+                        },
+                    )
+                    event_store.touch_session(snap["session_id"])
+                    await asyncio.to_thread(
+                        arc_manager.index_turn, snap["session_id"],
+                        snap["turn_count"], snap["generated_text"], snap["arc_number"],
+                    )
+                    if memory_manager.should_summarize(snap["session_id"]):
+                        await _try_summarize(snap["session_id"], snap["turn_count"], snap["arc_number"])
+                    perf.record("stream_turn_total", (_time_mod.perf_counter() - t0) * 1000)
+                except Exception:
+                    pass
 
-            perf.record("stream_turn_total", (_time_mod.perf_counter() - t_stream_start) * 1000)
+            asyncio.create_task(_post_done_work(_snap, _t_total))
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except httpx.ConnectError:

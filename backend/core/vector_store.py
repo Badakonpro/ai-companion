@@ -93,6 +93,8 @@ class VectorStore:
 
     def _get_embedding_sync(self, text: str) -> Optional[list[float]]:
         """Call Ollama /api/embed synchronously. Returns None on failure."""
+        if self._embed_ok is False:
+            return None
         try:
             with httpx.Client(timeout=15) as client:
                 resp = client.post(

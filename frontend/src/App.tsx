@@ -564,6 +564,7 @@ function App() {
       const decoder = new TextDecoder();
       const reader = response.body.getReader();
       let pending = '';
+      let streamComplete = false;
 
       const applyNarrative = (text: string) => {
         setMessages(prev => prev.map(msg => (
@@ -653,10 +654,12 @@ function App() {
             }
           }
           if (eventName === 'done') {
-            continue;
+            streamComplete = true;
+            break;
           }
           handleEvent(eventName, dataLine);
         }
+        if (streamComplete) break;
       }
 
       const protagonistContent = streamState.protagonistAction;
